@@ -1,0 +1,106 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0b0d0c;
+  --color-surface: #141816;
+  --color-raised: #1c211e;
+  --color-fg: #e6ebe7;
+  --color-muted: #8b948c;
+  --color-subtle: #5c635e;
+  --color-border: #2a302c;
+  --color-line: #3a423c;
+  --color-accent: #c5d0c8;
+  --color-accent-fg: #0b0d0c;
+  --color-readout: #b7e0c4;
+  --color-readout-dim: #6f8f78;
+  --color-ok: #7dba8c;
+  --color-warn: #c4b07a;
+  --color-hazard: #d07a6a;
+  --color-glass: rgb(11 13 12 / 72%);
+
+  --font-sans: "Barlow", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+
+  --shadow-panel: 0 12px 40px rgb(0 0 0 / 35%);
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  html,
+  body,
+  #app {
+    min-height: 100%;
+    background: var(--color-bg);
+    color: var(--color-fg);
+  }
+
+  body {
+    font-family: var(--font-sans);
+    margin: 0;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.reticle-glow {
+  filter: drop-shadow(0 0 6px rgb(183 224 196 / 35%));
+}
+
+.readout {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  color: var(--color-readout);
+}
+
+.horizon-grid {
+  background-image:
+    linear-gradient(to bottom, transparent 48%, rgb(183 224 196 / 18%) 50%, transparent 52%),
+    repeating-linear-gradient(
+      90deg,
+      transparent 0,
+      transparent 47px,
+      rgb(183 224 196 / 8%) 48px,
+      rgb(183 224 196 / 8%) 49px
+    );
+}
