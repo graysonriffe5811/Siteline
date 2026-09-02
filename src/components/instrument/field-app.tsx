@@ -43,6 +43,9 @@ export function FieldApp() {
   const [desc, setDesc] = useState("");
   const [ptName, setPtName] = useState("");
   const [padOpen, setPadOpen] = useState(false);
+  const [padField, setPadField] = useState<"sd" | "za" | "hr">("sd");
+  const [padValue, setPadValue] = useState("");
+  const [prismKeyed, setPrismKeyed] = useState(true);
   const [toast, setToast] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [laser, setLaser] = useState<LaserHit | null>(null);
@@ -86,7 +89,7 @@ export function FieldApp() {
     return radiation({
       station: stationPt,
       hi: job.station.hi,
-      ht: laser?.kind === "prism" || laser?.kind === "pole" ? job.station.ht : 0,
+      ht: (laser ? laser.kind === "prism" || laser.kind === "pole" : prismKeyed) ? job.station.ht : 0,
       az,
       za: reading.za,
       distance: dist,
@@ -120,23 +123,27 @@ export function FieldApp() {
     window.setTimeout(() => setToast(null), 2200);
   }
 
-  function store() {
+  function store(opts?: { live?: boolean }) {
     if (mode === "gps" && gps.status !== "on") gps.start();
-    const dist = Number(distStr) > 0 ? Number(distStr) : laser?.sd ?? 0;
+    const keyed = !opts?.live && Number(distStr) > 0;
+    const dist = keyed ? Number(distStr) : laser?.sd ?? 0;
     if (!(dist > 0) && mode !== "ground" && mode !== "gps") {
-      flash("Aim at something in the scope first — wait for LOCK");
+      flash("Key SD on the gun (tap SD) or aim for LOCK");
+      setPadField("sd");
+      setPadValue(distStr);
+      setPadOpen(true);
       return;
     }
-    const prism = laser?.kind === "prism" || laser?.kind === "pole";
+    const prism = laser ? laser.kind === "prism" || laser.kind === "pole" : prismKeyed;
     const res = storeShot({
       name: ptName.trim() || active.nextName,
       code: laser?.code || code,
       desc: laser?.label || desc,
       ha: reading.ha,
       za: reading.za,
-      magAz: reading.magAz,
+      magAz: keyed ? null : reading.magAz,
       distance: dist,
-      mode,
+      mode: keyed ? "edm" : mode,
       ht: prism ? active.station?.ht : 0,
       gps:
         mode === "gps" && gps.fix
@@ -167,7 +174,7 @@ export function FieldApp() {
     setMeasuring(true);
     setFireNonce((n) => n + 1);
     window.setTimeout(() => {
-      store();
+      store({ live: true });
       setFiring(false);
       setMeasuring(false);
     }, 220);
@@ -298,13 +305,19 @@ export function FieldApp() {
                 (distStr ? Number(distStr) * Math.sin((reading.za * Math.PI) / 180) : laser ? laser.sd * Math.sin((reading.za * Math.PI) / 180) : null)
               }
               distMode={distMode}
-              prism={laser?.kind === "prism"}
+              prism={laser ? laser.kind === "prism" : prismKeyed}
               held={inst.held}
               measuring={measuring}
               units={job.units}
               levelOk={!plateOff}
               hit={laser}
               onMeas={fire}
+              onEditField={(field) => {
+                setPadField(field);
+                setPadValue("");
+                setPadOpen(true);
+              }}
+              onTogglePrism={() => setPrismKeyed((v) => !v)}
               onToggleDist={() => {
                 setDistMode((d) => (d === "sd" ? "hd" : "sd"));
                 setMode((m) => (m === "hd" ? "edm" : m));
@@ -314,15 +327,6 @@ export function FieldApp() {
                   flash("Occupy first");
                   return;
                 }
-                occupy({
-                  pointId: job.station.pointId,
-                  hi: job.station.hi,
-                  ht: job.station.ht,
-                  mode: job.station.orientationMode,
-                  azAtZero: az,
-                  backsightId: job.station.backsightId,
-                  bsHa: 0,
-                });
                 inst.setManual({ ha: 0 });
                 flash("0SET — HR 0°00'00\"");
               }}
@@ -331,7 +335,10 @@ export function FieldApp() {
                 const bs = job.station?.backsightId ? findPoint(job.points, job.station.backsightId) : undefined;
                 flash(bs ? `B.S. ${bs.name}` : "No backsight");
               }}
-              onEnter={fire}
+              onEnter={() => {
+                if (Number(distStr) > 0) store();
+                else fire();
+              }}
               enterDisabled={!job.station && mode !== "gps"}
             />
 
@@ -419,11 +426,22 @@ export function FieldApp() {
         <div className="absolute inset-0 z-30 flex items-end justify-center bg-glass p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <div className="w-full max-w-md rounded-xl border border-border bg-surface p-4 shadow-panel">
             <NumPad
-              label={mode === "hd" ? `Horizontal distance (${u})` : `Slope distance (${u})`}
-              value={distStr}
-              onChange={setDistStr}
+              label={
+                padField === "za"
+                  ? "Zenith V"
+                  : padField === "hr"
+                    ? "HR / Az"
+                    : mode === "hd"
+                      ? `Horizontal distance (${u})`
+                      : `Slope distance SD (${u})`
+              }
+              value={padValue}
+              angle={padField !== "sd"}
+              onChange={setPadValue}
               onCommit={(n) => {
-                setDistStr(String(n));
+                if (padField === "sd") setDistStr(String(n));
+                if (padField === "za") inst.setManual({ za: n });
+                if (padField === "hr") inst.setManual({ ha: n });
                 setPadOpen(false);
               }}
             />
