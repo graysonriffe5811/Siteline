@@ -64,10 +64,10 @@ export function Gm50Panel({
           boxShadow: "inset 0 0 0 1px #4a5248, inset 0 8px 18px rgba(0,0,0,0.35)",
         }}
       >
-        <LcdLine k="V" v={formatDms(v, 0)} onClick={() => onEditField?.("za")} />
-        <LcdLine k="HR" v={formatDms(hr, 0)} onClick={() => onEditField?.("hr")} />
+        <LcdLine k="V" v={formatDms(v, 0)} onClick={() => onEditField?.("za")} ariaLabel="Zenith V" />
+        <LcdLine k="HR" v={formatDms(hr, 0)} onClick={() => onEditField?.("hr")} ariaLabel="HR / Az" />
         <div className="flex items-baseline justify-between text-[15px] leading-tight text-[#d7e6d4]">
-          <button type="button" className="text-left tabular-nums" onClick={() => onEditField?.("sd")}>
+          <button type="button" className="text-left tabular-nums" aria-label="Slope distance SD" onClick={() => onEditField?.("sd")}>
             {tag}
             {star} {shown != null && shown > 0 ? shown.toFixed(3) : "———.---"} {u}
           </button>
@@ -105,10 +105,11 @@ export function Gm50Panel({
   );
 }
 
-function LcdLine({ k, v, onClick }: { k: string; v: string; onClick?: () => void }) {
+function LcdLine({ k, v, onClick, ariaLabel }: { k: string; v: string; onClick?: () => void; ariaLabel?: string }) {
   return (
     <button
       type="button"
+      aria-label={ariaLabel ?? k}
       onClick={onClick}
       className="flex w-full items-baseline gap-2 text-left text-[15px] leading-tight text-[#d7e6d4] tabular-nums"
     >

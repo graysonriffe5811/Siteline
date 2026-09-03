@@ -31,7 +31,6 @@ export function FieldApp() {
   const hydrated = useSurvey((s) => s.hydrated);
   const job = useJob();
   const storeShot = useSurvey((s) => s.storeShot);
-  const occupy = useSurvey((s) => s.occupy);
   const inst = useInstrument();
   const cam = useCamera();
   const gps = useGps();
@@ -95,7 +94,7 @@ export function FieldApp() {
       distance: dist,
       distIsHd,
     });
-  }, [job, stationPt, distStr, mode, az, reading.za, laser?.kind]);
+  }, [job, stationPt, distStr, mode, az, reading.za, laser?.kind, prismKeyed]);
 
   if (!hydrated) {
     return (
@@ -166,8 +165,15 @@ export function FieldApp() {
 
   function fire() {
     if (firing) return;
+    if (Number(distStr) > 0) {
+      store();
+      return;
+    }
     if (!laser) {
-      flash("Nothing in the beam — point the crosshair at an object");
+      flash("Key SD on the gun (tap SD) or aim for LOCK");
+      setPadField("sd");
+      setPadValue(distStr);
+      setPadOpen(true);
       return;
     }
     setFiring(true);
@@ -469,7 +475,8 @@ export function FieldApp() {
               </li>
               <li>
                 <span className="font-semibold text-readout">3. Store.</span> That reading becomes a point (HA, ZA, SD →
-                NEZ) on the map and a new stake in the world. FIND is the collimator; 30× is the scope.
+                NEZ) on the map and a new stake in the world. FIND is the collimator; 30× is the scope. Tap V, HR, or SD
+                on the gun to key a check-calc, then STORE — no EDM lock required.
               </li>
             </ol>
             <Button
