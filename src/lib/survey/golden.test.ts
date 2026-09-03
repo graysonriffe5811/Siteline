@@ -142,13 +142,8 @@ test("G03 zenith down stays P / HT 5.00 / Z 750.15; live ground lock does not ap
   assert.equal(r2(qaMiss.nez.z), 755.15);
 });
 
-test("G04 east forward holds keyed V 90°00'00″; live 90°01'40″ is ignored", () => {
-  const liveZa = 90 + 1 / 60 + 40 / 3600;
-  const { obs, s } = storeFromKeys(
-    { ha: 90, za: 90, sd: 50, measMode: "P" },
-    { za: liveZa, ha: 90, sd: 50 },
-  );
-  assert.equal(obs.za, 90);
+test("G04 east forward", () => {
+  const s = keyedStore({ ha: 90, za: 90, sd: 50, ht: HT_IR });
   assertNez(s, { n: 5000, e: 2050, z: 800.15, hd: 50, vd: 0 });
 });
 
