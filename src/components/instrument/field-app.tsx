@@ -6,6 +6,7 @@ import { useCamera, useGps, useInstrument } from "@/hooks/use-instrument";
 import { formatDms, toBearing } from "@/lib/survey/angles";
 import { FINDER_HFOV, SCOPE_HFOV } from "@/lib/survey/optics";
 import { depressionHd, findPoint, liveAzimuth, radiation } from "@/lib/survey/coords";
+import { htForMeasMode, resolveKeyedObs } from "@/lib/survey/meas-store";
 import type { LaserHit } from "@/lib/survey/site-scene";
 import { useJob, useSurvey } from "@/lib/survey/store";
 import type { DistMethod, TabId } from "@/lib/survey/types";
@@ -31,7 +32,6 @@ export function FieldApp() {
   const hydrated = useSurvey((s) => s.hydrated);
   const job = useJob();
   const storeShot = useSurvey((s) => s.storeShot);
-  const occupy = useSurvey((s) => s.occupy);
   const inst = useInstrument();
   const cam = useCamera();
   const gps = useGps();
@@ -43,6 +43,12 @@ export function FieldApp() {
   const [desc, setDesc] = useState("");
   const [ptName, setPtName] = useState("");
   const [padOpen, setPadOpen] = useState(false);
+  const [padField, setPadField] = useState<"sd" | "za" | "hr">("sd");
+  const [padValue, setPadValue] = useState("");
+  const [prismKeyed, setPrismKeyed] = useState(true);
+  const [keyedZa, setKeyedZa] = useState<number | null>(null);
+  const [keyedHa, setKeyedHa] = useState<number | null>(null);
+  const [sdKeyed, setSdKeyed] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [laser, setLaser] = useState<LaserHit | null>(null);
@@ -55,7 +61,7 @@ export function FieldApp() {
   const [floatText, setFloatText] = useState<string | null>(null);
   const [score, setScore] = useState(0);
   const nudgeRef = useRef(inst.addDelta);
-  nudgeRef.current = (dHa, dZa) => inst.addDelta(dHa, dZa);
+  nudgeRef.current = (dHa, dZa) => inst.addDelta(keyedHa != null ? 0 : dHa, keyedZa != null ? 0 : dZa);
 
   useEffect(() => {
     if (job) setPtName(job.nextName);
@@ -71,13 +77,17 @@ export function FieldApp() {
 
   const stationPt = job?.station ? findPoint(job.points, job.station.pointId) : undefined;
   const reading = inst.reading();
-  const az = job ? liveAzimuth(job.station, reading.ha, reading.magAz, job.declination) : reading.ha;
+  const zaShown = keyedZa ?? reading.za;
+  const haShown = keyedHa ?? reading.ha;
+  const az = job
+    ? liveAzimuth(job.station, haShown, keyedHa != null || keyedZa != null || sdKeyed ? null : reading.magAz, job.declination)
+    : haShown;
   const preview = useMemo(() => {
     if (!job?.station || !stationPt) return null;
     let dist = Number(distStr);
     let distIsHd = mode === "hd" || mode === "ground";
     if (mode === "ground") {
-      const hd = depressionHd(job.station.hi, reading.za);
+      const hd = depressionHd(job.station.hi, zaShown);
       if (hd == null) return null;
       dist = hd;
       distIsHd = true;
@@ -86,13 +96,13 @@ export function FieldApp() {
     return radiation({
       station: stationPt,
       hi: job.station.hi,
-      ht: laser?.kind === "prism" || laser?.kind === "pole" ? job.station.ht : 0,
+      ht: htForMeasMode(prismKeyed ? "P" : "NP", job.station.ht),
       az,
-      za: reading.za,
+      za: zaShown,
       distance: dist,
       distIsHd,
     });
-  }, [job, stationPt, distStr, mode, az, reading.za, laser?.kind]);
+  }, [job, stationPt, distStr, mode, az, zaShown, prismKeyed]);
 
   if (!hydrated) {
     return (
@@ -120,24 +130,38 @@ export function FieldApp() {
     window.setTimeout(() => setToast(null), 2200);
   }
 
-  function store() {
+  function store(opts?: { live?: boolean }) {
     if (mode === "gps" && gps.status !== "on") gps.start();
-    const dist = Number(distStr) > 0 ? Number(distStr) : laser?.sd ?? 0;
+    const measMode = prismKeyed ? "P" : "NP";
+    const obs = resolveKeyedObs({
+      keyedZa,
+      keyedHa,
+      keyedSd: sdKeyed && Number(distStr) > 0 ? Number(distStr) : null,
+      measMode,
+      liveZa: reading.za,
+      liveHa: reading.ha,
+      liveSd: opts?.live ? (laser?.sd ?? null) : (laser?.sd ?? (Number(distStr) > 0 ? Number(distStr) : null)),
+      occupyHt: active.station?.ht ?? 0,
+    });
+    const keyed = !opts?.live && (sdKeyed || keyedZa != null || keyedHa != null || Number(distStr) > 0);
+    const dist = obs.sd ?? 0;
     if (!(dist > 0) && mode !== "ground" && mode !== "gps") {
-      flash("Aim at something in the scope first — wait for LOCK");
+      flash("Key SD on the gun (tap SD) or aim for LOCK");
+      setPadField("sd");
+      setPadValue(distStr);
+      setPadOpen(true);
       return;
     }
-    const prism = laser?.kind === "prism" || laser?.kind === "pole";
     const res = storeShot({
       name: ptName.trim() || active.nextName,
       code: laser?.code || code,
       desc: laser?.label || desc,
-      ha: reading.ha,
-      za: reading.za,
-      magAz: reading.magAz,
+      ha: obs.ha,
+      za: obs.za,
+      magAz: keyed ? null : reading.magAz,
       distance: dist,
-      mode,
-      ht: prism ? active.station?.ht : 0,
+      mode: keyed ? "edm" : mode,
+      ht: obs.ht,
       gps:
         mode === "gps" && gps.fix
           ? { lat: gps.fix.lat, lon: gps.fix.lon, accuracy: gps.fix.accuracy, alt: gps.fix.alt }
@@ -159,15 +183,22 @@ export function FieldApp() {
 
   function fire() {
     if (firing) return;
+    if (Number(distStr) > 0) {
+      store();
+      return;
+    }
     if (!laser) {
-      flash("Nothing in the beam — point the crosshair at an object");
+      flash("Key SD on the gun (tap SD) or aim for LOCK");
+      setPadField("sd");
+      setPadValue(distStr);
+      setPadOpen(true);
       return;
     }
     setFiring(true);
     setMeasuring(true);
     setFireNonce((n) => n + 1);
     window.setTimeout(() => {
-      store();
+      store({ live: true });
       setFiring(false);
       setMeasuring(false);
     }, 220);
@@ -205,7 +236,7 @@ export function FieldApp() {
           <span>GM-50</span>
           {job.station ? (
             <span>
-              HI {job.station.hi.toFixed(2)} · HT {job.station.ht.toFixed(2)}
+              HI {job.station.hi.toFixed(2)} · HT {htForMeasMode(prismKeyed ? "P" : "NP", job.station.ht).toFixed(2)}
             </span>
           ) : null}
           <span className="text-[#2e7d32]">● TS</span>
@@ -245,8 +276,8 @@ export function FieldApp() {
               <Viewfinder
                 videoRef={cam.videoRef}
                 cameraOn={cam.status === "on"}
-                ha={reading.ha}
-                za={reading.za}
+                ha={haShown}
+                za={zaShown}
                 az={az}
                 roll={inst.roll}
                 held={inst.held}
@@ -255,15 +286,16 @@ export function FieldApp() {
                 hi={job.station?.hi ?? 5.15}
                 hfov={hfov}
                 onHfov={setHfov}
-                onAim={(dHa, dZa) => inst.addDelta(dHa, dZa)}
+                onAim={(dHa, dZa) => inst.addDelta(keyedHa != null ? 0 : dHa, keyedZa != null ? 0 : dZa)}
                 fireNonce={fireNonce}
                 firing={firing}
                 preview={preview ? { n: preview.nez.n, e: preview.nez.e } : null}
                 onRange={(hit) => {
                   setLaser(hit);
+                  if (sdKeyed) return;
                   if (hit && (mode === "edm" || mode === "hd")) {
                     const sd = hit.sd;
-                    const zaRad = (reading.za * Math.PI) / 180;
+                    const zaRad = (zaShown * Math.PI) / 180;
                     setDistStr((mode === "hd" ? sd * Math.sin(zaRad) : sd).toFixed(3));
                   }
                 }}
@@ -290,21 +322,27 @@ export function FieldApp() {
             </div>
 
             <Gm50Panel
-              v={reading.za}
-              hr={reading.ha}
+              v={zaShown}
+              hr={haShown}
               sd={distStr ? Number(distStr) : laser?.sd ?? null}
               hd={
                 preview?.hd ??
-                (distStr ? Number(distStr) * Math.sin((reading.za * Math.PI) / 180) : laser ? laser.sd * Math.sin((reading.za * Math.PI) / 180) : null)
+                (distStr ? Number(distStr) * Math.sin((zaShown * Math.PI) / 180) : laser ? laser.sd * Math.sin((zaShown * Math.PI) / 180) : null)
               }
               distMode={distMode}
-              prism={laser?.kind === "prism"}
+              prism={prismKeyed}
               held={inst.held}
               measuring={measuring}
               units={job.units}
               levelOk={!plateOff}
               hit={laser}
               onMeas={fire}
+              onEditField={(field) => {
+                setPadField(field);
+                setPadValue("");
+                setPadOpen(true);
+              }}
+              onTogglePrism={() => setPrismKeyed((v) => !v)}
               onToggleDist={() => {
                 setDistMode((d) => (d === "sd" ? "hd" : "sd"));
                 setMode((m) => (m === "hd" ? "edm" : m));
@@ -314,16 +352,8 @@ export function FieldApp() {
                   flash("Occupy first");
                   return;
                 }
-                occupy({
-                  pointId: job.station.pointId,
-                  hi: job.station.hi,
-                  ht: job.station.ht,
-                  mode: job.station.orientationMode,
-                  azAtZero: az,
-                  backsightId: job.station.backsightId,
-                  bsHa: 0,
-                });
                 inst.setManual({ ha: 0 });
+                setKeyedHa(null);
                 flash("0SET — HR 0°00'00\"");
               }}
               onHold={() => inst.hold()}
@@ -331,7 +361,10 @@ export function FieldApp() {
                 const bs = job.station?.backsightId ? findPoint(job.points, job.station.backsightId) : undefined;
                 flash(bs ? `B.S. ${bs.name}` : "No backsight");
               }}
-              onEnter={fire}
+              onEnter={() => {
+                if (Number(distStr) > 0) store();
+                else fire();
+              }}
               enterDisabled={!job.station && mode !== "gps"}
             />
 
@@ -419,11 +452,31 @@ export function FieldApp() {
         <div className="absolute inset-0 z-30 flex items-end justify-center bg-glass p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <div className="w-full max-w-md rounded-xl border border-border bg-surface p-4 shadow-panel">
             <NumPad
-              label={mode === "hd" ? `Horizontal distance (${u})` : `Slope distance (${u})`}
-              value={distStr}
-              onChange={setDistStr}
+              label={
+                padField === "za"
+                  ? "Zenith V"
+                  : padField === "hr"
+                    ? "HR / Az"
+                    : mode === "hd"
+                      ? `Horizontal distance (${u})`
+                      : `Slope distance SD (${u})`
+              }
+              value={padValue}
+              angle={padField !== "sd"}
+              onChange={setPadValue}
               onCommit={(n) => {
-                setDistStr(String(n));
+                if (padField === "sd") {
+                  setDistStr(String(n));
+                  setSdKeyed(true);
+                }
+                if (padField === "za") {
+                  inst.setManual({ za: n });
+                  setKeyedZa(n);
+                }
+                if (padField === "hr") {
+                  inst.setManual({ ha: n });
+                  setKeyedHa(n);
+                }
                 setPadOpen(false);
               }}
             />
@@ -451,7 +504,8 @@ export function FieldApp() {
               </li>
               <li>
                 <span className="font-semibold text-readout">3. Store.</span> That reading becomes a point (HA, ZA, SD →
-                NEZ) on the map and a new stake in the world. FIND is the collimator; 30× is the scope.
+                NEZ) on the map and a new stake in the world. FIND is the collimator; 30× is the scope. Tap V, HR, or SD
+                on the gun to key a check-calc, then STORE — no EDM lock required.
               </li>
             </ol>
             <Button
