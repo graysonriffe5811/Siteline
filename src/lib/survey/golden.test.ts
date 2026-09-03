@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { inverse, liveAzimuth, radiation, distanceDistance } from "./coords.ts";
 import { createBlankJob } from "./demo.ts";
+import { htForMeasMode, resolveKeyedObs, type MeasMode } from "./meas-store.ts";
 import type { Station } from "./types.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -49,6 +50,27 @@ function keyedStore(args: { ha: number; za: number; sd: number; ht: number; azAt
   });
 }
 
+/** STORE HT from MEAS MODE, not the live EDM lock. */
+function storeFromKeys(
+  keyed: { ha: number; za: number; sd: number; measMode: MeasMode },
+  live?: { za?: number; ha?: number; sd?: number | null; occupyHt?: number },
+) {
+  const obs = resolveKeyedObs({
+    keyedZa: keyed.za,
+    keyedHa: keyed.ha,
+    keyedSd: keyed.sd,
+    measMode: keyed.measMode,
+    liveZa: live?.za ?? keyed.za,
+    liveHa: live?.ha ?? keyed.ha,
+    liveSd: live?.sd === undefined ? keyed.sd : live.sd,
+    occupyHt: live?.occupyHt ?? HT_IR,
+  });
+  assert.equal(obs.measMode, keyed.measMode, "STORE must not change MEAS MODE");
+  assert.ok(obs.sd != null && obs.sd > 0);
+  const s = keyedStore({ ha: obs.ha, za: obs.za, sd: obs.sd, ht: obs.ht, azAtZero: 0 });
+  return { obs, s };
+}
+
 function assertNez(
   shot: { nez: { n: number; e: number; z: number }; hd: number; vd: number },
   expected: { n: number; e: number; z: number; hd?: number; vd?: number },
@@ -73,12 +95,29 @@ test("MEAS LCD exposes keyed SD / ZA / HR on the existing gun, not a second scre
   assert.match(gm50, /onClick=\{\(\) => onEditField\?\.\("hr"\)\}/);
   assert.match(gm50, /onClick=\{\(\) => onEditField\?\.\("sd"\)\}/);
   assert.match(fieldApp, /padField, setPadField\] = useState<"sd" \| "za" \| "hr">/);
-  assert.match(fieldApp, /if \(padField === "za"\) inst\.setManual\(\{ za: n \}\)/);
-  assert.match(fieldApp, /if \(padField === "hr"\) inst\.setManual\(\{ ha: n \}\)/);
-  assert.match(fieldApp, /if \(padField === "sd"\) setDistStr\(String\(n\)\)/);
-  assert.match(fieldApp, /keyed \? Number\(distStr\) : laser\?\.sd/);
-  assert.match(fieldApp, /if \(Number\(distStr\) > 0\) {\s*store\(\);/s);
+  assert.match(fieldApp, /if \(padField === "za"\) \{/);
+  assert.match(fieldApp, /setKeyedZa\(n\)/);
+  assert.match(fieldApp, /if \(padField === "hr"\) \{/);
+  assert.match(fieldApp, /setKeyedHa\(n\)/);
+  assert.match(fieldApp, /if \(padField === "sd"\) \{/);
+  assert.match(fieldApp, /setSdKeyed\(true\)/);
+  assert.match(fieldApp, /resolveKeyedObs\(/);
+  assert.match(fieldApp, /if \(sdKeyed\) return/);
+  assert.match(fieldApp, /zaShown = keyedZa \?\? reading\.za/);
+  assert.match(fieldApp, /haShown = keyedHa \?\? reading\.ha/);
   assert.doesNotMatch(fieldApp, /Calculate position/);
+});
+
+test("STORE HT follows MEAS MODE P/NP, not the live EDM lock, and STORE does not flip MEAS MODE", () => {
+  assert.equal(htForMeasMode("P", HT_IR), HT_IR);
+  assert.equal(htForMeasMode("NP", HT_IR), HT_RL);
+  assert.match(fieldApp, /htForMeasMode\(/);
+  assert.match(fieldApp, /prism=\{prismKeyed\}/);
+  assert.match(fieldApp, /onTogglePrism=\{\(\) => setPrismKeyed\(\(v\) => !v\)\}/);
+  assert.match(gm50, /MEAS MODE \{mode\}/);
+  assert.doesNotMatch(fieldApp, /laser \? laser\.kind === "prism"/);
+  assert.doesNotMatch(fieldApp, /setPrismKeyed\(false\)/);
+  assert.doesNotMatch(fieldApp, /setPrismKeyed\(true\)/);
 });
 
 test("G01 level north", () => {
@@ -91,13 +130,25 @@ test("G02 zenith up", () => {
   assertNez(s, { n: 5086.6, e: 2000, z: 850.15, hd: 86.6, vd: 50 });
 });
 
-test("G03 zenith down", () => {
-  const s = keyedStore({ ha: 0, za: 120, sd: 100, ht: HT_IR });
+test("G03 zenith down stays P / HT 5.00 / Z 750.15; live ground lock does not apply HT 0", () => {
+  const { obs, s } = storeFromKeys(
+    { ha: 0, za: 120, sd: 100, measMode: "P" },
+    { za: 120, ha: 0, sd: 100, occupyHt: HT_IR },
+  );
+  assert.equal(obs.measMode, "P");
+  assert.equal(obs.ht, HT_IR);
   assertNez(s, { n: 5086.6, e: 2000, z: 750.15, hd: 86.6, vd: -50 });
+  const qaMiss = keyedStore({ ha: 0, za: 120, sd: 100, ht: htForMeasMode("NP", HT_IR) });
+  assert.equal(r2(qaMiss.nez.z), 755.15);
 });
 
-test("G04 east forward", () => {
-  const s = keyedStore({ ha: 90, za: 90, sd: 50, ht: HT_IR });
+test("G04 east forward holds keyed V 90°00'00″; live 90°01'40″ is ignored", () => {
+  const liveZa = 90 + 1 / 60 + 40 / 3600;
+  const { obs, s } = storeFromKeys(
+    { ha: 90, za: 90, sd: 50, measMode: "P" },
+    { za: liveZa, ha: 90, sd: 50 },
+  );
+  assert.equal(obs.za, 90);
   assertNez(s, { n: 5000, e: 2050, z: 800.15, hd: 50, vd: 0 });
 });
 
@@ -127,15 +178,20 @@ test("G08 set azimuth 45, no BS", () => {
   assertNez(s, { n: 5070.71, e: 2070.71, z: 800.15 });
 });
 
-test("G09 IR vs RL height", () => {
-  const ir = keyedStore({ ha: 0, za: 90, sd: 100, ht: HT_IR });
-  const rl = keyedStore({ ha: 0, za: 90, sd: 100, ht: HT_RL });
-  assert.equal(r2(ir.nez.n), 5100);
-  assert.equal(r2(rl.nez.n), 5100);
-  assert.equal(r2(ir.nez.e), 2000);
-  assert.equal(r2(rl.nez.e), 2000);
-  assert.equal(r2(ir.nez.z), 800.15);
-  assert.equal(r2(rl.nez.z), 805.15);
+test("G09 same keyed shot: P → Z 800.15 HT 5, NP → Z 805.15 HT 0 even when EDM is prism-locked", () => {
+  const live = { za: 90, ha: 0, sd: 100, occupyHt: HT_IR };
+  const ir = storeFromKeys({ ha: 0, za: 90, sd: 100, measMode: "P" }, live);
+  const rl = storeFromKeys({ ha: 0, za: 90, sd: 100, measMode: "NP" }, live);
+  assert.equal(ir.obs.measMode, "P");
+  assert.equal(rl.obs.measMode, "NP");
+  assert.equal(ir.obs.ht, HT_IR);
+  assert.equal(rl.obs.ht, HT_RL);
+  assert.equal(r2(ir.s.nez.n), 5100);
+  assert.equal(r2(rl.s.nez.n), 5100);
+  assert.equal(r2(ir.s.nez.e), 2000);
+  assert.equal(r2(rl.s.nez.e), 2000);
+  assert.equal(r2(ir.s.nez.z), 800.15);
+  assert.equal(r2(rl.s.nez.z), 805.15);
 });
 
 test("G10 G11 DD resection left/right of A→B", () => {
